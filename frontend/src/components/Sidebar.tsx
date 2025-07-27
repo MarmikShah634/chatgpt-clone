@@ -18,18 +18,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, chatHis
   const handleToggle = () => {
     setSpinning(true);
     toggleSidebar();
-    setTimeout(() => setSpinning(false), 500); // duration of spin animation
+    setTimeout(() => setSpinning(false), 500);
   };
 
   const handleDeleteChat = (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
-    dispatch(deleteChat(id));
+    if(confirm("Are you sure you want to delete this chat??")){
+      dispatch(deleteChat(id));
+      // You might want to clear current chat if deleted chat was active
+      // dispatch(setCurrentChatId(null));
+      // dispatch(setMessages([]));
+    }
   };
 
   return (
     <div className={`bg-gray-800 text-white h-screen p-4 flex flex-col transition-width duration-300 ${isOpen ? 'w-64' : 'w-16'}`}>
       <button
-        // className={`mb-4 bg-gray-700 hover:bg-gray-600 rounded px-3 py-2 focus:outline-none flex items-center justify-center ${spinning ? 'animate-spin' : ''}`}
         className={`mb-4 bg-gray-700 hover:bg-gray-600 rounded ${isOpen ? 'px-3 py-2' : 'p-1.5'} focus:outline-none flex items-center justify-center`}
         onClick={handleToggle}
         aria-label="Toggle Sidebar"

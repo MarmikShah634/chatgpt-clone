@@ -1,11 +1,16 @@
 import React, { useEffect } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import {Sidebar} from './components/Sidebar';
+import { Sidebar } from './components/Sidebar';
 import LoginForm from './components/LoginForm';
 import SignupForm from './components/SignupForm';
 import ChatSection from './components/ChatSection';
 import type { RootState, AppDispatch } from './store';
-import { login, logout, switchToLogin, switchToSignup, toggleSidebar, addNewChat, setMessages, setLoading, updateChatHistory, clearChat, setChatHistory, setCurrentChatId } from './store';
+import { login, logout, switchToLogin, switchToSignup, toggleSidebar, setMessages, setLoading, clearChat, setChatHistory, setCurrentChatId } from './store';
+
+interface Message {
+  role: "user" | "assistant";
+  content: string;
+}
 
 const Header: React.FC<{ onLogout: () => void }> = ({ onLogout }) => (
   <header className="flex justify-between items-center p-4 bg-gray-900 text-white">
@@ -31,18 +36,20 @@ function App() {
 
   useEffect(() => {
     if (user) {
-      // Fetch chat history from backend
       fetch(`http://localhost:8000/chats?username=${encodeURIComponent(user)}`)
         .then((res) => res.json())
         .then((data) => {
-          // Map chat titles to first 2-3 words of question
-          const chats = data.map((chat: any) => ({
-            id: chat.id,
-            title: chat.question.split(' ').slice(0, 3).join(' ') + (chat.question.split(' ').length > 3 ? '...' : ''),
-          }));
+          const chats = data.map((chat: any) => {
+            const title = chat.title || "Untitled Chat"; 
+            return {
+              id: chat.id,
+              title: title,
+            };
+          });
           dispatch(setChatHistory(chats));
         })
-        .catch(() => {
+        .catch((error) => {
+          console.error("Error fetching chat history:", error);
           dispatch(setChatHistory([]));
         });
     }
@@ -57,80 +64,95 @@ function App() {
     dispatch(setLoading(true));
     fetch(`http://localhost:8000/chat/${id}`)
       .then((res) => res.json())
-        .then((data) => {
-          const newMessages = [
-            { role: 'user' as const, content: data.question },
-            { role: 'assistant' as const, content: data.answer },
-          ];
-          dispatch(setMessages(newMessages));
-          dispatch(setCurrentChatId(id));
-        })
-      .catch(() => {
-        // Handle error if needed
+      .then((data) => {
+        const conversation = JSON.parse(data.conversation_history || "[]");
+        const newMessages = conversation.map((msg: any) => ({
+          role: msg.role as 'user' | 'assistant',
+          content: msg.content,
+        }));
+        dispatch(setMessages(newMessages));
+        dispatch(setCurrentChatId(id));
+      })
+      .catch((error) => {
+        console.error("Error fetching chat details:", error);
+        dispatch(setMessages([]));
       })
       .finally(() => {
         dispatch(setLoading(false));
       });
   };
 
-  const addNewChatHandler = () => {
-    dispatch(setMessages([]));
+  const addNewChatHandler = async () => {
     dispatch(setCurrentChatId(null));
-    // Optionally refetch chat history to include new chat if saved
-    if (user) {
-      fetch(`http://localhost:8000/chats?username=${encodeURIComponent(user)}`)
-        .then((res) => res.json())
-        .then((data) => {
-          const chats = data.map((chat: any) => ({
-            id: chat.id,
-            title: chat.question.split(' ').slice(0, 3).join(' ') + (chat.question.split(' ').length > 3 ? '...' : ''),
-          }));
-          dispatch(setChatHistory(chats));
-        })
-        .catch(() => {
-          dispatch(setChatHistory([]));
-        });
-    }
+    dispatch(setMessages([]));
+    dispatch(toggleSidebar());
   };
 
   const onSendMessage = async (message: string) => {
-    if (!user) return;
-    // Immediately add user message
-    const userMessage = { role: 'user' as const, content: message };
-    const newMessages = [...messages, userMessage];
-    dispatch(setMessages(newMessages));
-    dispatch(setLoading(true));
-    try {
-      const response = await fetch(`http://localhost:8000/chat?username=${encodeURIComponent(user)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: message }),
-      });
-      if (!response.ok) {
-        dispatch(setLoading(false));
-        return;
-      }
-      const data = await response.json();
-      const assistantMessage = { role: 'assistant' as const, content: data.answer };
-      dispatch(setMessages([...newMessages, assistantMessage]));
+  if (!user) return;
 
-      if (currentChatId !== null) {
-        dispatch(updateChatHistory({ id: currentChatId, messages: [...newMessages, assistantMessage] }));
-      }
-    } catch (error: any) {
-      console.log(error.message)
+  
+  const userMessage = { role: 'user' as const, content: message };
+  
+  dispatch(setMessages([...messages, userMessage]));
+  dispatch(setLoading(true));
+
+  try {
+    const url = `http://localhost:8000/chat?username=${encodeURIComponent(user)}${currentChatId ? `&chat_id=${currentChatId}` : ''}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: message }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Failed to send message:", response.status, errorText);
+      dispatch(setLoading(false));
+      return;
     }
+
+    const data = await response.json();
+
+    const conversationFromBackend: Message[] = JSON.parse(data.conversation_history);
+
+    dispatch(setMessages(conversationFromBackend));
+
+    if (!currentChatId) {
+      dispatch(setCurrentChatId(data.id));
+    }
+
+    const chatsResponse = await fetch(`http://localhost:8000/chats?username=${encodeURIComponent(user)}`);
+    if (chatsResponse.ok) {
+      const chatsData = await chatsResponse.json();
+      const chats = chatsData.map((chat: any) => {
+        const title = chat.title || "Untitled Chat";
+        return {
+          id: chat.id,
+          title: title,
+        };
+      });
+      dispatch(setChatHistory(chats));
+    }
+
+  } catch (error: any) {
+    console.error("Error sending message or parsing response:", error.message);
+  } finally {
     dispatch(setLoading(false));
-  };
+  }
+};
 
   const handleLogin = (username: string) => {
     dispatch(login(username));
-    dispatch(addNewChat());
+    dispatch(setCurrentChatId(null));
+    dispatch(setMessages([]));
   };
 
   const handleSignup = (username: string) => {
     dispatch(login(username));
-    dispatch(addNewChat());
+    dispatch(setCurrentChatId(null));
+    dispatch(setMessages([]));
   };
 
   const handleLogout = () => {

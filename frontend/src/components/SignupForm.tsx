@@ -40,10 +40,10 @@ const SignupForm: React.FC<SignupFormProps> = ({ onSignup, switchToLogin }) => {
   };
 
   return (
-    <div className="max-w-md mx-auto mt-20 p-6 bg-gray-800 rounded shadow-md text-white">
-      <h2 className="text-2xl font-bold mb-4">Sign Up</h2>
-      <form onSubmit={handleSubmit} className="flex flex-col space-y-4">
-        <label className="flex flex-col">
+    <div className="w-full max-w-sm flex flex-col items-center mx-auto mt-35 p-6 bg-gray-800 rounded-lg shadow-xl text-white">
+      <h2 className="text-2xl font-bold mb-5">Sign Up</h2>
+      <form onSubmit={handleSubmit} className="flex flex-col space-y-5 w-full">
+        <label className="flex flex-col text-base">
           Username:
           <input
             type="text"
@@ -52,10 +52,10 @@ const SignupForm: React.FC<SignupFormProps> = ({ onSignup, switchToLogin }) => {
             required
             autoComplete="username"
             disabled={loading}
-            className="mt-1 p-2 rounded bg-gray-700 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="mt-1 p-2.5 rounded-md bg-gray-700 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 text-base"
           />
         </label>
-        <label className="flex flex-col">
+        <label className="flex flex-col text-base">
           Password:
           <input
             type="password"
@@ -64,10 +64,10 @@ const SignupForm: React.FC<SignupFormProps> = ({ onSignup, switchToLogin }) => {
             required
             autoComplete="new-password"
             disabled={loading}
-            className="mt-1 p-2 rounded bg-gray-700 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="mt-1 p-2.5 rounded-md bg-gray-700 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 text-base"
           />
         </label>
-        <label className="flex flex-col">
+        <label className="flex flex-col text-base">
           Confirm Password:
           <input
             type="password"
@@ -76,22 +76,22 @@ const SignupForm: React.FC<SignupFormProps> = ({ onSignup, switchToLogin }) => {
             required
             autoComplete="new-password"
             disabled={loading}
-            className="mt-1 p-2 rounded bg-gray-700 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="mt-1 p-2.5 rounded-md bg-gray-700 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 text-base"
           />
         </label>
-        {error && <p className="text-red-500 mt-2">{error}</p>}
+        {error && <p className="text-red-500 mt-2 text-base">{error}</p>}
         <button
           type="submit"
           disabled={loading}
-          className="bg-blue-600 hover:bg-blue-700 text-white py-2 rounded disabled:opacity-50"
+          className="bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-md disabled:opacity-50 text-base font-semibold"
         >
           {loading ? 'Signing up...' : 'Sign Up'}
         </button>
       </form>
-      <p className="mt-4">
+      <p className="mt-4 text-base">
         Already have an account?{' '}
         <button
-          className="text-blue-400 underline hover:text-blue-600 focus:outline-none"
+          className="text-blue-400 underline hover:text-blue-600 focus:outline-none text-base font-semibold"
           onClick={switchToLogin}
           disabled={loading}
         >

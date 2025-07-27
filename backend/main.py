@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Query
 from pydantic import BaseModel
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
 from passlib.context import CryptContext
+import json # Import json for handling conversation_history
 
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain.prompts import PromptTemplate
@@ -32,8 +33,13 @@ class Chat(Base):
     __tablename__ = "chats"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    question = Column(Text)
-    answer = Column(Text)
+    first_question = Column(Text, nullable=True) # To store the first question for the title
+    conversation_history = Column(Text, default="[]") # Stores JSON string of [{role: "user", content: "..."}]
+    # We can keep 'question' and 'answer' if needed for legacy or simplified access,
+    # but 'conversation_history' will be the primary source for full chat.
+    # For now, let's remove them to avoid redundancy and rely solely on conversation_history
+    # question = Column(Text) # Removed
+    # answer = Column(Text)   # Removed
     owner = relationship("User", back_populates="chats")
 
 Base.metadata.create_all(bind=engine)
@@ -47,14 +53,17 @@ class UserLogin(BaseModel):
     username: str
     password: str
 
-class ChatMessage(BaseModel):
+class ChatMessagePayload(BaseModel): # Renamed to avoid confusion with internal Message object
     question: str
-    answer: Optional[str] = None
+
+class Message(BaseModel): # Represents a single message in the conversation
+    role: str
+    content: str
 
 class ChatResponse(BaseModel):
     id: int
-    question: str
-    answer: str
+    title: str # Changed from 'question' to 'title'
+    conversation_history: str # Full conversation as JSON string
 
 # AI model setup
 llm = OllamaLLM(model="gemma2:2b")
@@ -101,6 +110,11 @@ def authenticate_user(db: Session, username: str, password: str):
         return False
     return user
 
+# Helper to create chat title from first question
+def create_chat_title(question: str) -> str:
+    words = question.split(' ')
+    return ' '.join(words[:3]) + ('...' if len(words) > 3 else '')
+
 # Routes
 @app.post("/signup")
 def signup(user: UserCreate, db: Session = Depends(get_db)):
@@ -122,29 +136,71 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
     return {"message": "Login successful", "username": auth_user.username}
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(message: ChatMessage, username: str, db: Session = Depends(get_db)):
+def chat(
+    message_payload: ChatMessagePayload,
+    username: str,
+    chat_id: Optional[int] = Query(None), # Optional chat_id
+    db: Session = Depends(get_db)
+):
     user = get_user(db, username)
     if not user:
         raise HTTPException(status_code=400, detail="User not found")
 
-    # Retrieve chat history for user
-    chat_history = ChatMessageHistory()
-    user_chats = db.query(Chat).filter(Chat.user_id == user.id).all()
-    for chat_msg in user_chats:
-        chat_history.add_user_message(chat_msg.question)
-        chat_history.add_ai_message(chat_msg.answer)
+    db_chat: Optional[Chat] = None
+    conversation: List[Message] = []
+
+    if chat_id:
+        # Attempt to find existing chat
+        db_chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == user.id).first()
+        if not db_chat:
+            raise HTTPException(status_code=404, detail="Chat not found for this user")
+        conversation = json.loads(db_chat.conversation_history)
+
+    # Add user's new message to conversation
+    conversation.append({"role": "user", "content": message_payload.question})
+
+    # Prepare chat history for LLM
+    llm_chat_history = ChatMessageHistory()
+    for msg in conversation:
+        if msg["role"] == "user":
+            llm_chat_history.add_user_message(msg["content"])
+        elif msg["role"] == "assistant":
+            llm_chat_history.add_ai_message(msg["content"])
 
     # Generate AI response
-    chat_history_text = "\n".join([f"{msg.type.capitalize()}: {msg.content}" for msg in chat_history.messages])
-    response = llm.invoke(prompt.format(chat_history=chat_history_text, question=message.question))
+    chat_history_text = "\n".join([f"{msg.type.capitalize()}: {msg.content}" for msg in llm_chat_history.messages])
+    print(f"Chat History Sent to LLM: \n{chat_history_text}")
+    llm_response = llm.invoke(prompt.format(chat_history=chat_history_text, question=message_payload.question))
+    print(f"LLM Raw Response: '{llm_response}'") 
 
-    # Store new chat in DB
-    new_chat = Chat(user_id=user.id, question=message.question, answer=response)
-    db.add(new_chat)
-    db.commit()
-    db.refresh(new_chat)
+    # Add AI's response to conversation
+    conversation.append({"role": "assistant", "content": llm_response})
 
-    return ChatResponse(id=new_chat.id, question=new_chat.question, answer=new_chat.answer)
+    if db_chat:
+        # Update existing chat
+        db_chat.conversation_history = json.dumps(conversation)
+        if not db_chat.first_question: # If first question wasn't set (e.g., initial empty chat)
+            db_chat.first_question = message_payload.question
+        db.add(db_chat)
+        db.commit()
+        db.refresh(db_chat)
+    else:
+        # Create new chat
+        new_chat = Chat(
+            user_id=user.id,
+            first_question=message_payload.question,
+            conversation_history=json.dumps(conversation)
+        )
+        db.add(new_chat)
+        db.commit()
+        db.refresh(new_chat)
+        db_chat = new_chat
+
+    return ChatResponse(
+        id=db_chat.id,
+        title=create_chat_title(db_chat.first_question or "New Chat"), # Ensure a title
+        conversation_history=db_chat.conversation_history
+    )
 
 @app.get("/chats", response_model=List[ChatResponse])
 def get_chats(username: str, db: Session = Depends(get_db)):
@@ -152,14 +208,25 @@ def get_chats(username: str, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=400, detail="User not found")
     chats = db.query(Chat).filter(Chat.user_id == user.id).all()
-    return [ChatResponse(id=chat.id, question=chat.question, answer=chat.answer) for chat in chats]
+    return [
+        ChatResponse(
+            id=chat.id,
+            title=create_chat_title(chat.first_question or "Untitled Chat"),
+            conversation_history=chat.conversation_history # Return full history for get_chats as well (optional, but good for consistency)
+        )
+        for chat in chats
+    ]
 
 @app.get("/chat/{chat_id}", response_model=ChatResponse)
 def get_chat(chat_id: int, db: Session = Depends(get_db)):
     chat = db.query(Chat).filter(Chat.id == chat_id).first()
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
-    return ChatResponse(id=chat.id, question=chat.question, answer=chat.answer)
+    return ChatResponse(
+        id=chat.id,
+        title=create_chat_title(chat.first_question or "Untitled Chat"),
+        conversation_history=chat.conversation_history
+    )
 
 @app.delete("/chat/{chat_id}")
 def delete_chat(chat_id: int, db: Session = Depends(get_db)):
